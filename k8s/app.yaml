@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: feuerwehr
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-config
+  namespace: feuerwehr
+data:
+  APP_NAME: "FF Quierschied"
+  APP_ENV: "staging"
+  APP_DEBUG: "false"
+  APP_URL: "https://test.example.de"
+  LOG_CHANNEL: "stderr"
+  # Noch keine Datenbank: Sessions im Cookie, Cache pro Pod, Jobs sofort.
+  SESSION_DRIVER: "cookie"
+  CACHE_STORE: "file"
+  QUEUE_CONNECTION: "sync"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: feuerwehr
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: web
+          image: ghcr.io/OWNER/REPO:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: web-config
+            - secretRef:
+                name: web-secrets
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: feuerwehr
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: feuerwehr
+spec:
+  rules:
+    - host: test.example.de
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80

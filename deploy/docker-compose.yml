@@ -1,0 +1,31 @@
+services:
+  web:
+    image: ghcr.io/OWNER/REPO:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: staging
+      APP_DEBUG: "false"
+      APP_URL: https://dev.feuerwehr-quierschied.de
+      LOG_CHANNEL: stderr
+      # Noch keine Datenbank: Sessions im Cookie, Cache im Container, Jobs sofort.
+      SESSION_DRIVER: cookie
+      CACHE_STORE: file
+      QUEUE_CONNECTION: sync
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

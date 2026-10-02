@@ -1,0 +1,9 @@
+[Unit]
+Description=Feuerwehr-Webseite alle 5 Minuten auf neue Version prüfen
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
