@@ -38,7 +38,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: web
-          image: ghcr.io/OWNER/REPO:latest
+          image: ghcr.io/feuerwehr-quierschied/ffw-website:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
