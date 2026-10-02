@@ -1,0 +1,17 @@
+# Beispiel für den File-Provider deines zentralen Traefik.
+# Interne Adresse des Feuerwehr-LXC und Namen von Entrypoint/Resolver anpassen.
+http:
+  routers:
+    feuerwehr-dev:
+      rule: Host(`dev.feuerwehr-quierschied.org`)
+      entryPoints:
+        - websecure
+      service: feuerwehr-dev
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    feuerwehr-dev:
+      loadBalancer:
+        servers:
+          - url: http://10.10.10.2:8080

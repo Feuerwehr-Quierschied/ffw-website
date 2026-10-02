@@ -1,4 +1,0 @@
-dev.feuerwehr-quierschied.de {
-	encode zstd gzip
-	reverse_proxy web:8080
-}

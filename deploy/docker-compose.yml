@@ -6,26 +6,13 @@ services:
     environment:
       APP_ENV: staging
       APP_DEBUG: "false"
-      APP_URL: https://dev.feuerwehr-quierschied.de
+      APP_URL: https://dev.feuerwehr-quierschied.org
       LOG_CHANNEL: stderr
       # Noch keine Datenbank: Sessions im Cookie, Cache im Container, Jobs sofort.
       SESSION_DRIVER: cookie
       CACHE_STORE: file
       QUEUE_CONNECTION: sync
-
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
+    # Nur auf der internen Adresse lauschen, damit die Seite ausschließlich
+    # über Traefik erreichbar ist. WEB_BIND steht in der .env.
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - web
-
-volumes:
-  caddy_data:
-  caddy_config:
+      - "${WEB_BIND:?WEB_BIND in .env setzen}:8080:8080"

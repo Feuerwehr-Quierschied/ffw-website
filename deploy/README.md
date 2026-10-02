@@ -1,33 +1,29 @@
-# Testinstanz: dev.feuerwehr-quierschied.de
+# Testinstanz: dev.feuerwehr-quierschied.org
 
-Ein Debian-LXC (oder eine VM) auf dem Proxmox-Host, Docker Compose, Caddy für HTTPS.
-Die VM holt sich neue Versionen selbst (GitHub erreicht sie über IPv6 nicht).
+Ein Debian-LXC auf dem Proxmox-Host mit Docker Compose. Davor sitzt der zentrale
+Traefik (öffentliches IPv4 und IPv6), der an den LXC weiterleitet.
+Der LXC holt sich neue Versionen selbst (GitHub erreicht ihn nicht).
 
 ```
-git push → GitHub Actions baut Image → ghcr.io
-VM: systemd-Timer alle 5 Min → docker compose pull → up -d
-Besucher → Caddy (:443, Let's Encrypt) → web (:8080)
+git push (dev) → GitHub Actions baut Image → ghcr.io/…:dev
+LXC: systemd-Timer alle 5 Min → docker compose pull → up -d
+Besucher → Traefik (:443, Zertifikat) → LXC intern (:8080)
 ```
 
 ## 0. LXC anlegen (Proxmox)
 
-- Vorlage: Debian 12, unprivilegiert
+- Vorlage: Debian, unprivilegiert
 - 1 Kern, 1 GB RAM, 8 GB Disk reichen für die Seite
-- Netzwerk: `eth0` an `vmbr0` mit eigener IPv6-Adresse, `eth1` an `vmbr1` (siehe Schritt 1)
-- Docker im LXC braucht verschachtelte Container. Unter Optionen → Features
-  `nesting` und `keyctl` aktivieren, oder auf dem Host:
+- Netzwerk: intern an `vmbr1` (z. B. `10.10.10.2/24`, Gateway `10.10.10.1`)
+- Docker im LXC braucht verschachtelte Container:
 
 ```bash
 pct set <ID> --features nesting=1,keyctl=1
 ```
 
-Die eigene IPv6-Adresse des LXC bedeutet: Caddy kann die Ports 80/443 dort belegen,
-ohne mit einem anderen Reverse-Proxy auf dem Host (z. B. Traefik) zu kollidieren.
+## 1. Ausgehendes IPv4 für den LXC (auf dem Proxmox-Host)
 
-## 1. Ausgehendes IPv4 für die VM/den LXC (auf dem Proxmox-Host)
-
-`ghcr.io` und `github.com` haben kein IPv6. Die VM bekommt deshalb ein privates
-IPv4-Netz, das der Host per NAT nach außen leitet.
+`ghcr.io` und `github.com` haben kein IPv6. Der Host leitet das interne Netz per NAT nach außen.
 
 In `/etc/network/interfaces` auf dem Host (Ausgangs-Interface `vmbr0` ggf. anpassen):
 
@@ -47,16 +43,13 @@ iface vmbr1 inet static
 ifreload -a
 ```
 
-Der VM eine zweite Netzwerkkarte an `vmbr1` geben, in der VM z. B.
-`10.10.10.2/24`, Gateway `10.10.10.1`. IPv6 bleibt wie gehabt an `vmbr0`.
-
-Test in der VM:
+Test im LXC:
 
 ```bash
 curl -sS -o /dev/null -w "%{http_code}\n" https://ghcr.io/v2/   # erwartet: 401
 ```
 
-## 2. Docker in der VM
+## 2. Docker im LXC
 
 ```bash
 apt update && apt install -y ca-certificates curl
@@ -67,38 +60,50 @@ echo "deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/l
 apt update && apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 ```
 
-Ist das Paket in GHCR privat (GitHub-Token mit `read:packages`):
+Anmeldung an der Registry (klassischer GitHub-Token mit `read:packages`):
 
 ```bash
 docker login ghcr.io -u <github-user>
 ```
 
-## 3. Dateien auf die VM
+## 3. Dateien und Konfiguration
 
 ```bash
 mkdir -p /opt/feuerwehr
-# docker-compose.yml und Caddyfile aus diesem Ordner nach /opt/feuerwehr kopieren
 ```
 
-In `docker-compose.yml` `ghcr.io/OWNER/REPO` anpassen.
+Vom Mac aus:
 
-`/opt/feuerwehr/.env` anlegen (nicht ins Repository!):
-
-```
-APP_KEY=base64:...
+```bash
+scp deploy/docker-compose.yml deploy/feuerwehr-update.service deploy/feuerwehr-update.timer root@[<IPv6-des-LXC>]:/opt/feuerwehr/
 ```
 
-Den Schlüssel lokal erzeugen mit `php artisan key:generate --show`.
+`/opt/feuerwehr/.env` anlegen (nicht ins Repository!). `WEB_BIND` ist die interne
+Adresse des LXC, damit die Seite nur über Traefik erreichbar ist:
 
-## 4. DNS
+```bash
+cat > /opt/feuerwehr/.env <<EOF
+APP_KEY=base64:$(openssl rand -base64 32)
+WEB_BIND=10.10.10.2
+EOF
+chmod 600 /opt/feuerwehr/.env
+```
 
-AAAA-Eintrag `dev.feuerwehr-quierschied.de` → IPv6-Adresse der VM.
-Ports 80 und 443 in der Firewall freigeben. Caddy holt das Zertifikat beim ersten Start.
+## 4. Traefik
+
+Den Inhalt von `traefik-dynamic.yml` im File-Provider des zentralen Traefik eintragen
+und anpassen: interne Adresse des LXC, Entrypoint und Name des Zertifikats-Resolvers.
+
+DNS: `dev.feuerwehr-quierschied.org` mit A- und AAAA-Eintrag auf die öffentlichen
+Adressen des Traefik.
 
 ## 5. Starten und automatische Updates
 
 ```bash
-cd /opt/feuerwehr && docker compose up -d
+cd /opt/feuerwehr
+docker compose pull          # prüft Login und Image
+docker compose up -d
+curl -s -o /dev/null -w "%{http_code}\n" http://10.10.10.2:8080/up   # erwartet: 200
 
 cp feuerwehr-update.service feuerwehr-update.timer /etc/systemd/system/
 systemctl daemon-reload
@@ -110,11 +115,6 @@ Nützlich:
 ```bash
 docker compose logs -f web             # Laravel-Logs
 systemctl list-timers feuerwehr-update # nächster Update-Lauf
+journalctl -u feuerwehr-update -n 30   # letzter Update-Lauf
 systemctl start feuerwehr-update       # sofort aktualisieren
 ```
-
-## Hinweis IPv4-Besucher
-
-Mit nur einem AAAA-Eintrag ist die Seite für Netze ohne IPv6 nicht erreichbar.
-Für die Testinstanz ist das in Ordnung. Für den echten Betrieb: Ports 80/443 der
-Host-IPv4 per DNAT auf die VM weiterleiten und zusätzlich einen A-Eintrag setzen.
